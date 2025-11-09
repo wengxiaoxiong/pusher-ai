@@ -13,6 +13,7 @@
     "@ai-sdk/openai": "^2.0.2",
     "@ai-sdk/react": "^2.0.2",
     "@prisma/client": "^6.13.0",
+    "@radix-ui/react-scroll-area": "^1.2.10",
     "@vercel/blob": "^1.1.1",
     "ai": "^5.0.2",
     "class-variance-authority": "^0.7.1",
@@ -21,6 +22,8 @@
     "next": "15.4.5",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.3.1",
     "zod": "^4.0.14"
   },

@@ -1,194 +1,203 @@
-import { NextResponse } from "next/server"
-import { z } from "zod"
+import { createDeepSeek } from "@ai-sdk/deepseek"
+import { streamText } from "ai"
 
-type TodoStatus = "pending" | "in_progress" | "completed"
-
-type Inquiry = {
-  question: string
-  context: string
-  priority: number
-}
-
-const inquiryRequestSchema = z.object({
-  todos: z
-    .array(
-      z.object({
-        id: z.string(),
-        title: z.string(),
-        status: z.enum(["pending", "in_progress", "completed"]),
-        dueDate: z.string().optional(),
-        isBlocker: z.boolean().optional(),
-        lastCommitment: z.string().optional(),
-      }),
-    )
-    .default([]),
-  milestones: z
-    .array(
-      z.object({
-        id: z.string(),
-        title: z.string(),
-        progress: z.number().min(0).max(100),
-        dueDate: z.string().optional(),
-        target: z.string().optional(),
-      }),
-    )
-    .default([]),
-  memos: z
-    .array(
-      z.object({
-        id: z.string(),
-        key: z.string(),
-        content: z.string(),
-        category: z.string().optional(),
-        lastReviewedAt: z.string().optional(),
-      }),
-    )
-    .default([]),
-  signals: z
-    .object({
-      risks: z.array(z.string()).default([]),
-      context_changes: z.array(z.string()).default([]),
-    })
-    .default({ risks: [], context_changes: [] }),
-  lastAlignAt: z.string().optional(),
-})
-
-type InquiryRequest = z.infer<typeof inquiryRequestSchema>
-
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    const json = (await request.json()) as InquiryRequest
-    const payload = inquiryRequestSchema.parse(json)
+    const { todos, milestones, memos, signals, lastAlignAt } = await req.json()
 
-    const inquiries = buildInquiries(payload)
-    return NextResponse.json({ inquiries })
+    // 初始化 DeepSeek
+    const deepseek = createDeepSeek({
+      apiKey: process.env.DEEPSEEK_API_KEY,
+    })
+
+    // 构建给AI的上下文信息
+    const contextInfo = buildContextInfo({ todos, milestones, memos, signals, lastAlignAt })
+
+    const systemPrompt = `你是一个专业的个人管理助手。根据用户当前的状态,生成 1-3 个高价值的追问问题。
+
+你必须返回一个有效的JSON数组,格式如下:
+[
+  {
+    "question": "PitchLab 的 7 天 3 集计划进度如何?按现在的节奏能完成吗?",
+    "context": "上次说需要 8 小时/集,已完成 1 集",
+    "priority": 1
+  }
+]
+
+追问设计原则:
+
+1. **优先级1 - 关键路径问题** (最重要):
+   - 里程碑进度严重落后或风险高
+   - 被标记为阻塞的Todo
+   - 截止时间紧迫但进度不足
+
+2. **优先级2 - 风险跟进**:
+   - 上次识别的风险是否有变化
+   - 上下文变化是否需要调整计划
+   - 用户之前的承诺是否完成
+
+3. **优先级3 - 周期性回顾**:
+   - 长期记忆的有效性检查
+   - 长期目标的对齐度检查
+   - 距离上次拉齐时间较长的提醒
+
+问题质量要求:
+- ❌ 不要问"你今天做了什么"(这是拉齐的工作)
+- ✅ 问"这个方向对吗"、"你是否卡住了"、"按这个节奏能完成吗"
+- 问题应该**可回答性强**:用户能在1-2分钟内给出答案
+- 问题要**直指性强**:明确指向具体的里程碑、Todo或决策
+- 如果没有紧急问题,可以少于3个问题
+
+注意:
+- 只返回JSON数组,不要有其他文字说明
+- priority必须是数字1、2或3`
+
+    const userPrompt = `当前系统状态:
+
+${contextInfo}
+
+请生成追问列表:`
+
+    const result = streamText({
+      model: deepseek("deepseek-chat"),
+      system: systemPrompt,
+      prompt: userPrompt,
+    })
+
+    return result.toUIMessageStreamResponse()
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: error.errors.at(0)?.message ?? "请求无效" }, { status: 400 })
-    }
     console.error("inquiry api error", error)
-    return NextResponse.json({ error: "追问生成失败，请稍后再试" }, { status: 500 })
+    return new Response("AI追问生成失败,请稍后再试", { status: 500 })
   }
 }
 
-function buildInquiries({ todos, milestones, memos, signals, lastAlignAt }: InquiryRequest): Inquiry[] {
-  const result: Inquiry[] = []
+function buildContextInfo(payload: any): string {
+  const { todos, milestones, memos, signals, lastAlignAt } = payload
   const now = new Date()
-  const lastAlign = lastAlignAt ? new Date(lastAlignAt) : undefined
 
-  const overdueTodos = todos.filter((todo) => isOverdue(todo.dueDate, now) && todo.status !== "completed")
-  const blockerTodos = todos.filter((todo) => todo.isBlocker && todo.status !== "completed")
+  let info = ""
 
-  const riskyMilestones = milestones
-    .map((milestone) => ({
-      ...milestone,
-      daysToDue: milestone.dueDate ? diffInDays(now, new Date(milestone.dueDate)) : undefined,
-    }))
-    .filter((milestone) => {
-      if (milestone.progress >= 100) return false
-      if (typeof milestone.daysToDue !== "number") return milestone.progress < 50
-      if (milestone.daysToDue <= 3) return milestone.progress < 90
-      if (milestone.daysToDue <= 7) return milestone.progress < 70
-      return false
-    })
-    .sort((a, b) => (a.daysToDue ?? Infinity) - (b.daysToDue ?? Infinity))
+  // 1. Todos 信息
+  if (todos && todos.length > 0) {
+    info += "### Todos\n\n"
+    const activeTodos = todos.filter((t: any) => t.status !== "completed")
+    const blockerTodos = activeTodos.filter((t: any) => t.isBlocker)
 
-  for (const todo of [...blockerTodos, ...overdueTodos]) {
-    if (result.length >= 3) break
-    result.push({
-      question: `「${todo.title}」目前进展如何？需要额外支持来解除阻塞吗？`,
-      context: todo.lastCommitment ? `上次承诺：${todo.lastCommitment}` : `状态：${mapStatus(todo.status)}`,
-      priority: 1,
-    })
-  }
-
-  for (const milestone of riskyMilestones) {
-    if (result.length >= 3) break
-    const dueContext = milestone.dueDate
-      ? `截止 ${formatDate(milestone.dueDate)} 仅剩 ${milestone.daysToDue} 天`
-      : "无明确截止时间"
-    result.push({
-      question: `里程碑「${milestone.title}」当前进度 ${milestone.progress}% ，按这个节奏能否完成目标？`,
-      context: dueContext,
-      priority: 1,
-    })
-  }
-
-  if (result.length < 3 && signals.risks.length) {
-    const risk = signals.risks[0]
-    result.push({
-      question: `关于提到的风险「${risk}」，现在的状况有没有变化？`,
-      context: "风险追踪",
-      priority: 2,
-    })
-  }
-
-  if (result.length < 3 && signals.context_changes.length) {
-    const change = signals.context_changes[0]
-    result.push({
-      question: `由于「${change}」导致的变化，需要我们调整计划吗？`,
-      context: "上下文变更",
-      priority: 2,
-    })
-  }
-
-  if (result.length < 3 && memos.length) {
-    const memo = memos.sort((a, b) => {
-      const aDate = a.lastReviewedAt ? new Date(a.lastReviewedAt).getTime() : 0
-      const bDate = b.lastReviewedAt ? new Date(b.lastReviewedAt).getTime() : 0
-      return aDate - bDate
-    })[0]
-
-    result.push({
-      question: `长记忆「${memo.key}」还保持有效吗？需要更新相关判断吗？`,
-      context: memo.category ? `分类：${memo.category}` : "长期记忆复核",
-      priority: 3,
-    })
-  }
-
-  if (result.length < 3 && lastAlign) {
-    const hours = Math.floor((now.getTime() - lastAlign.getTime()) / (1000 * 60 * 60))
-    if (hours >= 5) {
-      result.push({
-        question: "距离上次拉齐已经超过 5 小时，有没有新的进展需要同步？",
-        context: `上次拉齐：${formatDateTime(lastAlign)}`,
-        priority: 3,
+    if (blockerTodos.length > 0) {
+      info += "**阻塞中的Todo**:\n"
+      blockerTodos.forEach((t: any) => {
+        info += `- ${t.title} (状态: ${mapStatus(t.status)})\n`
+        if (t.lastCommitment) info += `  承诺: ${t.lastCommitment}\n`
+        if (t.dueDate) info += `  截止: ${formatDate(t.dueDate)}\n`
       })
+      info += "\n"
+    }
+
+    const overdueTodos = activeTodos.filter((t: any) => t.dueDate && new Date(t.dueDate) < now)
+    if (overdueTodos.length > 0) {
+      info += "**逾期的Todo**:\n"
+      overdueTodos.forEach((t: any) => {
+        info += `- ${t.title} (截止: ${formatDate(t.dueDate)})\n`
+      })
+      info += "\n"
+    }
+
+    if (activeTodos.length > 0 && blockerTodos.length === 0 && overdueTodos.length === 0) {
+      info += "**进行中的Todo**:\n"
+      activeTodos.slice(0, 5).forEach((t: any) => {
+        info += `- ${t.title} (${mapStatus(t.status)})\n`
+      })
+      info += "\n"
     }
   }
 
-  return result.slice(0, 3)
+  // 2. Milestones 信息
+  if (milestones && milestones.length > 0) {
+    info += "### 里程碑\n\n"
+    milestones.forEach((m: any) => {
+      const daysToDue = m.dueDate ? diffInDays(now, new Date(m.dueDate)) : null
+      const isRisky = isRiskyMilestone(m.progress, daysToDue)
+
+      info += `- **${m.title}**: ${m.progress}%`
+      if (m.dueDate) {
+        info += ` (截止: ${formatDate(m.dueDate)}, 剩余${daysToDue}天)`
+      }
+      if (isRisky) {
+        info += ` ⚠️ 风险高`
+      }
+      info += "\n"
+      if (m.target) {
+        info += `  目标: ${m.target}\n`
+      }
+    })
+    info += "\n"
+  }
+
+  // 3. 风险信号
+  if (signals && signals.risks && signals.risks.length > 0) {
+    info += "### 风险信号\n\n"
+    signals.risks.forEach((r: string) => {
+      info += `- ${r}\n`
+    })
+    info += "\n"
+  }
+
+  // 4. 上下文变化
+  if (signals && signals.context_changes && signals.context_changes.length > 0) {
+    info += "### 上下文变化\n\n"
+    signals.context_changes.forEach((c: string) => {
+      info += `- ${c}\n`
+    })
+    info += "\n"
+  }
+
+  // 5. 长期记忆
+  if (memos && memos.length > 0) {
+    info += "### 长期记忆 (Memos)\n\n"
+    memos.forEach((m: any) => {
+      info += `- **${m.key}**: ${m.content}\n`
+      if (m.category) info += `  类别: ${m.category}\n`
+    })
+    info += "\n"
+  }
+
+  // 6. 上次拉齐时间
+  if (lastAlignAt) {
+    const hoursSinceAlign = Math.floor((now.getTime() - new Date(lastAlignAt).getTime()) / (1000 * 60 * 60))
+    info += `### 时间信息\n\n`
+    info += `上次拉齐: ${formatDateTime(new Date(lastAlignAt))} (${hoursSinceAlign}小时前)\n\n`
+  }
+
+  return info || "当前没有足够的状态信息"
 }
 
-function isOverdue(dueDate: string | undefined, now: Date) {
-  if (!dueDate) return false
-  const due = new Date(dueDate)
-  return due < now && !isSameDay(due, now)
+function isRiskyMilestone(progress: number, daysToDue: number | null): boolean {
+  if (progress >= 100) return false
+  if (daysToDue === null) return progress < 50
+  if (daysToDue <= 3) return progress < 90
+  if (daysToDue <= 7) return progress < 70
+  return false
 }
 
-function diffInDays(a: Date, b: Date) {
+function diffInDays(a: Date, b: Date): number {
   const msPerDay = 1000 * 60 * 60 * 24
   return Math.ceil((b.getTime() - a.getTime()) / msPerDay)
 }
 
-function isSameDay(a: Date, b: Date) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
-}
-
-function formatDate(value: string) {
+function formatDate(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return `${date.getMonth() + 1}/${date.getDate()}`
 }
 
-function formatDateTime(value: Date) {
+function formatDateTime(value: Date): string {
   return `${value.getMonth() + 1}/${value.getDate()} ${value.getHours().toString().padStart(2, "0")}:${value
     .getMinutes()
     .toString()
     .padStart(2, "0")}`
 }
 
-function mapStatus(status: TodoStatus) {
+function mapStatus(status: string): string {
   switch (status) {
     case "completed":
       return "已完成"

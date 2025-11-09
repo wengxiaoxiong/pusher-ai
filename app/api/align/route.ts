@@ -1,196 +1,117 @@
-import { NextResponse } from "next/server"
-import { z } from "zod"
+import { createDeepSeek, deepseek } from "@ai-sdk/deepseek"
+import {
+  type InferUITools,
+  type ToolSet,
+  type UIDataTypes,
+  type UIMessage,
+  convertToModelMessages,
+  streamText,
+  stepCountIs,
+} from "ai"
+import { markTodoComplete, queryTodos, addTodo, deleteTodo } from "@/lib/tools/todo"
+import { updateMilestoneProgress, queryMilestones, addMilestone, deleteMilestone } from "@/lib/tools/milestone"
+import { queryMemos, saveMemo, deleteMemo } from "@/lib/tools/memo"
+import { saveInteraction } from "@/lib/tools/interaction"
+import { getUserMemory } from "@/lib/user"
+import { getCurrentUserId } from "@/lib/auth"
 
-import { slugify } from "@/lib/slug"
+// 整合所有工具
+const tools = {
+  markTodoComplete,
+  queryTodos,
+  addTodo,
+  deleteTodo,
+  updateMilestoneProgress,
+  queryMilestones,
+  addMilestone,
+  deleteMilestone,
+  queryMemos,
+  saveMemo,
+  deleteMemo,
+  saveInteraction,
+} satisfies ToolSet
 
-const alignRequestSchema = z.object({
-  text: z.string().min(1, "请提供需要拉齐的文本"),
-})
+export type AlignTools = InferUITools<typeof tools>
+export type AlignMessage = UIMessage<never, UIDataTypes, AlignTools>
 
-type AlignRequest = z.infer<typeof alignRequestSchema>
-
-type AlignResponse = {
-  parsed: {
-    achievements: string[]
-    blockers: string[]
-    decisions: string[]
-  }
-  updates: {
-    completed_todos: string[]
-    milestone_progress: { id: string; progress: number }[]
-    new_memos: { key: string; content: string; category?: string }[]
-  }
-  signals: {
-    risks: string[]
-    context_changes: string[]
-  }
-  summary: string
-}
-
-const sentenceDelimiters = /[。！？!?\n]+/
-
-const achievementKeywords = ["完成", "搞定", "实现", "交付", "上线"]
-const blockerKeywords = ["卡住", "阻塞", "问题", "困难", "风险", "挑战", "延迟"]
-const decisionKeywords = ["决定", "计划", "准备", "打算", "安排", "调整"]
-const memoKeywords = ["记得", "需要记录", "memo", "提醒", "长期", "灵感"]
-const contextKeywords = ["调整", "变化", "改成", "切换", "更换"]
-const riskKeywords = ["风险", "担心", "隐患", "紧急", "压力"]
-
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    const body = (await request.json()) as AlignRequest
-    const { text } = alignRequestSchema.parse(body)
+    const { messages }: { messages: AlignMessage[] } = await req.json()
 
-    const sentences = text
-      .split(sentenceDelimiters)
-      .map((sentence) => sentence.trim())
-      .filter(Boolean)
+    // 初始化 DeepSeek
+    // const deepseek = createDeepSeek({
+    //   apiKey: process.env.DEEPSEEK_API_KEY,
+    // })
+    const userId = await getCurrentUserId()
+    const memory = await getUserMemory(userId)
+    const userMemory = formatUserMemory(memory)
+    console.log('userMemory', userMemory)
+    const systemPrompt = `
+    
+    
+    你是一个具有主观能动性的个人策略顾问和任务教练，不只是一个 To-Do 记录员。你要主动洞察用户的真实诉求，给出建设性的建议、风险判断和后续动作。 
+    今天的时间是${new Date().toLocaleDateString("zh-CN")}
+    用户所在时区是${Intl.DateTimeFormat().resolvedOptions().timeZone}
+    用户说明：${userMemory}
 
-    const achievements = collectMatches(sentences, achievementKeywords)
-    const blockers = collectMatches(sentences, blockerKeywords)
-    const decisions = collectMatches(sentences, decisionKeywords)
+【核心原则】
+1. **主动理解**：先判断用户真正想解决的问题，必要时先提 2-3 个聪明的问题再行动。
+2. **战略分析**：面对目标或困难时，先总结、拆解、指出阻塞/风险，再决定要不要落地到任务、里程碑或备忘。
+3. **行动闭环**：明确告诉用户你做了什么、发现了什么、接下来建议什么，而不是只汇报工具调用结果。
+4. **信息整洁**：只在必要时查询；需要留存长期信息时使用 memo；所有对话结束要保存交互。
 
-    const completedTodos = extractCompletedTodos(sentences)
-    const milestoneProgress = extractMilestoneProgress(sentences)
-    const newMemos = extractMemos(sentences)
+【工作流 A｜用户信息或长期记忆更新（优先）】
+- 触发：用户想更新背景、偏好、长期目标、重要事实等。
+- 操作：
+  1. 先通过对话提出 2-3 个关键问题，弄清楚要更新的内容、背景和使用场景。
+  2. 如需要参考历史，再查询现有数据；否则直接根据上下文判断。
+  3. 总结你的理解，确认无误后再写入（例如使用 saveMemo 或相关工具）。
+  4. 明确告知用户记录了哪些信息、下一步如何使用。
 
-    const risks = collectMatches(sentences, riskKeywords)
-    const contextChanges = collectMatches(sentences, contextKeywords)
+【工作流 B｜目标规划与任务管理】
+- 触发：用户提出新目标、进展、阻塞、想法或需要拆解/排序的任务。
+- 操作：
+  1. 解构意图：重述目标、识别关键里程碑、依赖和潜在风险，必要时提出澄清问题。
+  2. 给出主观洞察：结合经验提出建议、优先级排序、配套指标或注意事项。
+  3. 需要落地成行动时再调用工具（addTodo、addMilestone、updateMilestoneProgress、markTodoComplete、saveMemo、delete 系列等）。
+  4. 仅在用户明确要查看列表或你确实需要对齐现状时再查询（queryTodos/queryMilestones/queryMemos）。
 
-    const summary = buildSummary({
-      achievements,
-      blockers,
-      decisions,
-      milestoneProgress,
-      risks,
+【工具使用守则】
+- 删除、更新、完成任务要使用相应工具，动作要解释原因。
+- 当用户提及需要记住的信息时，判断是否写入 memo；提及进度时及时更新 milestone。
+- 可以同时调用多个工具，避免
+
+【沟通方式】
+- 用自然中文输出，结构清晰（如：洞察/风险/建议/行动）。
+- 先分析后回应，展示推理、潜在阻塞和可执行建议。
+- 主动提醒潜在的下一步或可探索方向，帮助用户前进一步，而不是等待进一步指令。`
+
+    const result = streamText({
+      // model: minimax.chat("MiniMax-M2"),
+      // model: moonshot.chat("kimi-k2-thinking"),
+      model: deepseek('deepseek-chat'),
+      system: systemPrompt,
+      messages: convertToModelMessages(messages),
+      stopWhen: stepCountIs(10),
+      tools,
     })
 
-    const response: AlignResponse = {
-      parsed: {
-        achievements,
-        blockers,
-        decisions,
-      },
-      updates: {
-        completed_todos: completedTodos,
-        milestone_progress: milestoneProgress,
-        new_memos: newMemos,
-      },
-      signals: {
-        risks,
-        context_changes: contextChanges.filter((item) => !risks.includes(item)),
-      },
-      summary,
-    }
-
-    return NextResponse.json(response)
+    return result.toUIMessageStreamResponse()
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: error.errors.at(0)?.message ?? "请求无效" }, { status: 400 })
-    }
-
     console.error("align api error", error)
-    return NextResponse.json({ error: "解析失败，请稍后再试" }, { status: 500 })
+    return new Response("AI 处理失败，请稍后再试", { status: 500 })
   }
 }
 
-function collectMatches(sentences: string[], keywords: string[]) {
-  const matches = sentences.filter((sentence) =>
-    keywords.some((keyword) => sentence.includes(keyword)),
-  )
-  return Array.from(new Set(matches))
-}
-
-function extractCompletedTodos(sentences: string[]) {
-  const completed: string[] = []
-  for (const sentence of sentences) {
-    if (!achievementKeywords.some((keyword) => sentence.includes(keyword))) continue
-
-    const todoMatch = sentence.match(/(?:完成|搞定|收尾)(?:了)?([\w\s\-_/]*?)(?:任务|todo|事项|工作)?(?=$|[,，。；;!！?？])/i)
-    if (todoMatch) {
-      const label = todoMatch[1].trim() || sentence
-      completed.push(slugify(label))
-      continue
-    }
-
-    if (sentence.length > 0) {
-      completed.push(slugify(sentence))
-    }
-  }
-  return Array.from(new Set(completed))
-}
-
-function extractMilestoneProgress(sentences: string[]) {
-  const progressUpdates: { id: string; progress: number }[] = []
-  for (const sentence of sentences) {
-    const match = sentence.match(
-      /(?:里程碑|milestone|阶段)\s*([\w\-_/一-龥]+)?[^\d]*(\d{1,3})%/i,
-    )
-    if (match) {
-      const [, rawId, rawProgress] = match
-      const id = slugify(rawId ?? sentence)
-      const progress = Math.min(100, Number.parseInt(rawProgress ?? "0", 10))
-      progressUpdates.push({ id, progress })
-    }
+function formatUserMemory(memory: Record<string, unknown>): string {
+  if (!memory || Object.keys(memory).length === 0) {
+    return "暂无长期记忆"
   }
 
-  return dedupeBy(progressUpdates, (item) => item.id)
-}
-
-function extractMemos(sentences: string[]) {
-  const memos: { key: string; content: string; category?: string }[] = []
-  for (const sentence of sentences) {
-    if (!memoKeywords.some((keyword) => sentence.includes(keyword))) continue
-
-    const keyMatch = sentence.match(/memo[:：]?\s*([\w\-_/一-龥]+)/i)
-    const key = slugify(keyMatch?.[1] ?? sentence)
-    const category = sentence.includes("目标") ? "goal" : sentence.includes("风险") ? "risk" : undefined
-    memos.push({ key, content: sentence, category })
+  try {
+    return JSON.stringify(memory, null, 2)
+  } catch (error) {
+    console.warn("formatUserMemory error", error)
+    return String(memory)
   }
-
-  return dedupeBy(memos, (item) => item.key)
-}
-
-function buildSummary({
-  achievements,
-  blockers,
-  decisions,
-  milestoneProgress,
-  risks,
-}: {
-  achievements: string[]
-  blockers: string[]
-  decisions: string[]
-  milestoneProgress: { id: string; progress: number }[]
-  risks: string[]
-}) {
-  const parts: string[] = []
-  if (achievements.length) {
-    parts.push(`识别到 ${achievements.length} 条成就`)
-  }
-  if (milestoneProgress.length) {
-    parts.push(`更新了 ${milestoneProgress.length} 个里程碑进度`)
-  }
-  if (blockers.length) {
-    parts.push(`存在 ${blockers.length} 个潜在阻塞`)
-  }
-  if (decisions.length) {
-    parts.push(`记录 ${decisions.length} 项决策`) 
-  }
-  if (risks.length) {
-    parts.push(`监控 ${risks.length} 个风险信号`)
-  }
-  return parts.join(" · ") || "已解析输入，等待下一步操作"
-}
-
-function dedupeBy<T>(items: T[], keyFn: (item: T) => string) {
-  const seen = new Set<string>()
-  const result: T[] = []
-  for (const item of items) {
-    const key = keyFn(item)
-    if (seen.has(key)) continue
-    seen.add(key)
-    result.push(item)
-  }
-  return result
 }
