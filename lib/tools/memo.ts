@@ -1,7 +1,7 @@
 import { tool } from "ai"
 import { z } from "zod"
 import { prisma } from "@/lib/prisma"
-import { getOrCreateDefaultUser } from "@/lib/user"
+import { requireCurrentUser } from "@/lib/auth"
 
 export const queryMemos = tool({
   description: "查询用户保存的长期记忆备忘录",
@@ -12,7 +12,7 @@ export const queryMemos = tool({
       .describe("筛选分类（如: financial, technical, team 等，不填则返回全部）"),
   }),
   execute: async ({ category }) => {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     const memos = await prisma.memo.findMany({
       where: {
@@ -44,7 +44,7 @@ export const saveMemo = tool({
       .describe("备忘录的分类 (如: financial, technical, team 等)"),
   }),
   execute: async ({ key, content, category }) => {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     await prisma.memo.upsert({
       where: {
@@ -76,7 +76,7 @@ export const deleteMemo = tool({
     memoKey: z.string().describe("备忘录的唯一标识符或关键词"),
   }),
   execute: async ({ memoKey }) => {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     const matchingMemo = await prisma.memo.findFirst({
       where: {

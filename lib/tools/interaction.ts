@@ -1,7 +1,7 @@
 import { tool } from "ai"
 import { z } from "zod"
 import { prisma } from "@/lib/prisma"
-import { getOrCreateDefaultUser } from "@/lib/user"
+import { requireCurrentUser } from "@/lib/auth"
 
 export const saveInteraction = tool({
   description: "保存本次对话交互到数据库",
@@ -10,7 +10,7 @@ export const saveInteraction = tool({
     summary: z.string().describe("AI 的回复总结"),
   }),
   execute: async ({ userInput, summary }) => {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     await prisma.interaction.create({
       data: {

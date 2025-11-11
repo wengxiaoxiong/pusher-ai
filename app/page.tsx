@@ -10,6 +10,13 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <div className="w-full max-w-4xl space-y-8">
+        <div className="flex justify-end">
+          <Link href="/auth/login">
+            <Button variant="outline" size="sm">
+              登录 / 注册
+            </Button>
+          </Link>
+        </div>
         {/* 头部 */}
         <div className="text-center space-y-4">
           <Badge className="bg-foreground text-background px-4 py-1.5">

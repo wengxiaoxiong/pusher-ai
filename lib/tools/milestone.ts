@@ -1,7 +1,7 @@
 import { tool } from "ai"
 import { z } from "zod"
 import { prisma } from "@/lib/prisma"
-import { getOrCreateDefaultUser } from "@/lib/user"
+import { requireCurrentUser } from "@/lib/auth"
 
 export const updateMilestoneProgress = tool({
   description: "更新里程碑的进度百分比",
@@ -14,7 +14,7 @@ export const updateMilestoneProgress = tool({
       .describe("进度百分比 (0-100)"),
   }),
   execute: async ({ milestoneName, progress }) => {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     // 尝试模糊匹配 title（不区分大小写）
     const matchingMilestone = await prisma.milestone.findFirst({
@@ -49,7 +49,7 @@ export const queryMilestones = tool({
       .describe("是否包含已完成的里程碑（默认 false）"),
   }),
   execute: async ({ includeCompleted = false }) => {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     const milestones = await prisma.milestone.findMany({
       where: {
@@ -99,7 +99,7 @@ export const addMilestone = tool({
       .describe("优先级（low=低, medium=中, high=高, urgent=紧急，默认 medium）"),
   }),
   execute: async ({ title, description, target, dueDate, priority = "medium" }) => {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     const milestone = await prisma.milestone.create({
       data: {
@@ -123,7 +123,7 @@ export const deleteMilestone = tool({
     milestoneName: z.string().describe("里程碑的名称或关键词"),
   }),
   execute: async ({ milestoneName }) => {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     const matchingMilestone = await prisma.milestone.findFirst({
       where: {

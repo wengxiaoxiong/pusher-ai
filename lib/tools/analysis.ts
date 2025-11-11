@@ -2,7 +2,7 @@ import { createDeepSeek } from "@ai-sdk/deepseek"
 import { generateText, tool } from "ai"
 import { z } from "zod"
 import { prisma } from "@/lib/prisma"
-import { getOrCreateDefaultUser } from "@/lib/user"
+import { requireCurrentUser } from "@/lib/auth"
 
 export const analyzePlanAndSuggestTodos = tool({
   description: "深度分析用户的目标，提出具体问题和细化建议，然后自动生成具体的 Todo 列表",
@@ -80,7 +80,7 @@ ${analysis.text}
     try {
       const todos = JSON.parse(todoList.text)
       console.log("[解析] 解析到 todos：", todos)
-      const user = await getOrCreateDefaultUser()
+      const user = await requireCurrentUser()
       console.log("[用户] 获取用户：", user)
 
       const createdTodos = []

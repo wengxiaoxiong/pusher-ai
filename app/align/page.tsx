@@ -13,6 +13,7 @@ import { getDashboardData } from "@/lib/actions"
 import type { AlignMessage } from "@/app/api/align/route"
 import { DashboardPanel } from "@/components/align/DashboardPanel"
 import { MessageBubble } from "@/components/align/MessageBubble"
+import { LogoutButton } from "@/components/auth/logout-button"
 
 const defaultText = `今天完成了 PitchLab 第二集脚本,也把数据校验任务搞定。
 广告投放里程碑进度提升到 55%,但剪辑资源仍然卡住,供应商迟迟没有反馈。
@@ -140,6 +141,14 @@ export default function AlignPage() {
       {/* 主要内容区域 */}
       <div className="flex-1 overflow-hidden p-6">
         <div className="mx-auto max-w-7xl h-full">
+          <div className="mb-4 flex items-center justify-between">
+            <Link href="/">
+              <Button variant="ghost" size="sm">
+                <ArrowLeft className="mr-1 h-4 w-4" /> 返回首页
+              </Button>
+            </Link>
+            <LogoutButton variant="outline" size="sm" />
+          </div>
           <ScrollArea className="h-full pr-4">
             <div className="pr-2">
               {/* 初始输入区域 */}

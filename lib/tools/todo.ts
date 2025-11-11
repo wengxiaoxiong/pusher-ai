@@ -1,7 +1,7 @@
 import { tool } from "ai"
 import { z } from "zod"
 import { prisma } from "@/lib/prisma"
-import { getOrCreateDefaultUser } from "@/lib/user"
+import { requireCurrentUser } from "@/lib/auth"
 
 export const markTodoComplete = tool({
   description: "将用户指定的 Todo 标记为完成",
@@ -9,7 +9,7 @@ export const markTodoComplete = tool({
     todoTitle: z.string().describe("Todo 的标题或关键词"),
   }),
   execute: async ({ todoTitle }) => {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     // 尝试模糊匹配 title（不区分大小写）
     const matchingTodo = await prisma.todo.findFirst({
@@ -46,7 +46,7 @@ export const queryTodos = tool({
       .describe("筛选状态（pending=未开始，in_progress=进行中，completed=已完成，all=全部）"),
   }),
   execute: async ({ status = "all" }) => {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     const todos = await prisma.todo.findMany({
       where: {
@@ -96,7 +96,7 @@ export const addTodo = tool({
       .describe("优先级（low=低, medium=中, high=高, urgent=紧急，默认 medium）"),
   }),
   execute: async ({ title, description, isBlocker = false, dueDate, priority = "medium" }) => {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     const todo = await prisma.todo.create({
       data: {
@@ -120,7 +120,7 @@ export const deleteTodo = tool({
     todoTitle: z.string().describe("Todo 的标题或关键词"),
   }),
   execute: async ({ todoTitle }) => {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     const matchingTodo = await prisma.todo.findFirst({
       where: {

@@ -15,31 +15,39 @@
 
 ### 用户管理
 
-#### 创建用户或获取默认用户
+#### 登录 / 注册
+
 ```
-GET /api/users
-POST /api/users
+POST /api/auth/register
+POST /api/auth/login
+POST /api/auth/logout
 ```
 
-**POST 请求体：**
+**注册请求体：**
 ```json
 {
-  "name": "用户名",
-  "email": "可选的邮箱"
-}
-```
-
-**响应：**
-```json
-{
-  "id": "用户ID",
   "name": "用户名",
   "email": "邮箱",
-  "longTermMemory": {},
-  "createdAt": "创建时间",
-  "updatedAt": "更新时间"
+  "password": "至少 6 位的密码"
 }
 ```
+
+**登录请求体：**
+```json
+{
+  "email": "邮箱",
+  "password": "密码"
+}
+```
+
+成功登录或注册后，系统会在 Cookie 中写入 `user_id`，随后即可访问其余 API。
+
+#### 获取当前登录用户
+```
+GET /api/users
+```
+
+返回当前 Cookie 中记录的用户信息；未登录将返回 401。
 
 #### 获取用户信息
 ```
@@ -270,7 +278,7 @@ export async function align(input: string) {
 ## 常见问题
 
 ### Q: 如何在没有用户 ID 的情况下操作？
-A: 在服务器端使用 `getCurrentUserId()` 函数，它会自动从 Cookie 中获取或创建默认用户。
+A: 在服务器端使用 `getCurrentUserId()` 函数，它会读取登录时写入的 Cookie；若未登录会抛出错误，需要先完成邮箱+密码登录。
 
 ### Q: 长期记忆有大小限制吗？
 A: PostgreSQL JSON 字段没有严格限制，但建议将单个条目保持在合理范围内（< 1MB）。

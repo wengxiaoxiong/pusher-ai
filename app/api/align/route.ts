@@ -99,7 +99,10 @@ export async function POST(req: Request) {
     return result.toUIMessageStreamResponse()
   } catch (error) {
     console.error("align api error", error)
-    return new Response("AI 处理失败，请稍后再试", { status: 500 })
+    const isAuthError = error instanceof Error && /未登录|未找到用户/.test(error.message)
+    return new Response(isAuthError ? "未登录" : "AI 处理失败，请稍后再试", {
+      status: isAuthError ? 401 : 500,
+    })
   }
 }
 

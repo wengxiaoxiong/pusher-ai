@@ -1,25 +1,6 @@
-import { prisma } from './prisma'
-
-// 获取或创建默认用户 (简化版,实际应该使用认证系统)
-export async function getOrCreateDefaultUser() {
-  const defaultEmail = 'demo@aipusher.com'
-
-  let user = await prisma.user.findUnique({
-    where: { email: defaultEmail },
-  })
-
-  if (!user) {
-    user = await prisma.user.create({
-      data: {
-        email: defaultEmail,
-        name: 'Demo User',
-        longTermMemory: {},
-      },
-    })
-  }
-
-  return user
-}
+import type { Prisma } from "@prisma/client"
+import { prisma } from "./prisma"
+import { hashPassword } from "./password"
 
 // 获取用户信息
 export async function getUser(userId: string) {
@@ -35,6 +16,24 @@ export async function createUser(data: { name: string; email?: string }) {
       ...data,
       longTermMemory: {},
     },
+  })
+}
+
+export async function createUserWithPassword(data: { name: string; email: string; password: string }) {
+  const passwordHash = hashPassword(data.password)
+  return await prisma.user.create({
+    data: {
+      name: data.name,
+      email: data.email,
+      passwordHash,
+      longTermMemory: {},
+    },
+  })
+}
+
+export async function getUserByEmail(email: string) {
+  return prisma.user.findUnique({
+    where: { email },
   })
 }
 
@@ -66,11 +65,12 @@ export async function updateUserMemory(
 ) {
   const currentMemory = await getUserMemory(userId)
   const updatedMemory: Record<string, unknown> = Object.assign({}, currentMemory, updates)
+  const jsonMemory = updatedMemory as Prisma.JsonObject
 
   return await prisma.user.update({
     where: { id: userId },
     data: {
-      longTermMemory: updatedMemory as any,
+      longTermMemory: jsonMemory,
     },
   })
 }
@@ -85,11 +85,12 @@ export async function addMemoryEntry(
   const updatedMemory: Record<string, unknown> = Object.assign({}, currentMemory, {
     [key]: value,
   })
+  const jsonMemory = updatedMemory as Prisma.JsonObject
 
   return await prisma.user.update({
     where: { id: userId },
     data: {
-      longTermMemory: updatedMemory as any,
+      longTermMemory: jsonMemory,
     },
   })
 }
@@ -98,12 +99,14 @@ export async function addMemoryEntry(
 export async function deleteMemoryEntry(userId: string, key: string) {
   const currentMemory = await getUserMemory(userId)
   const memoryObj = typeof currentMemory === 'object' && currentMemory !== null ? (currentMemory as Record<string, unknown>) : {}
-  const { [key]: _, ...updatedMemory } = memoryObj
+  const updatedMemory = { ...memoryObj }
+  delete updatedMemory[key]
+  const jsonMemory = updatedMemory as Prisma.JsonObject
 
   return await prisma.user.update({
     where: { id: userId },
     data: {
-      longTermMemory: updatedMemory as any,
+      longTermMemory: jsonMemory,
     },
   })
 }

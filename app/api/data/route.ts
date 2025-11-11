@@ -1,10 +1,10 @@
-import { NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { getOrCreateDefaultUser } from '@/lib/user'
+import { NextResponse } from "next/server"
+import { prisma } from "@/lib/prisma"
+import { requireCurrentUser } from "@/lib/auth"
 
 export async function GET() {
   try {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     const [todos, milestones, memos] = await Promise.all([
       prisma.todo.findMany({
@@ -48,7 +48,11 @@ export async function GET() {
       })),
     })
   } catch (error) {
-    console.error('get data error', error)
-    return NextResponse.json({ error: '获取数据失败' }, { status: 500 })
+    console.error("get data error", error)
+    const isAuthError = error instanceof Error && /未登录|未找到用户/.test(error.message)
+    return NextResponse.json(
+      { error: isAuthError ? "未登录" : "获取数据失败" },
+      { status: isAuthError ? 401 : 500 }
+    )
   }
 }

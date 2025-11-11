@@ -1,7 +1,7 @@
 'use server'
 
-import { prisma } from '@/lib/prisma'
-import { getOrCreateDefaultUser } from '@/lib/user'
+import { prisma } from "@/lib/prisma"
+import { requireCurrentUser } from "@/lib/auth"
 
 export type DashboardData = {
   todos: Array<{
@@ -32,7 +32,7 @@ export type DashboardData = {
 
 export async function getDashboardData(): Promise<DashboardData> {
   try {
-    const user = await getOrCreateDefaultUser()
+    const user = await requireCurrentUser()
 
     const [todos, milestones, memos] = await Promise.all([
       prisma.todo.findMany({

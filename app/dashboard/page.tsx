@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Target, CheckCircle2, Brain } from "lucide-react"
 import Link from "next/link"
 import { cn } from "@/lib/utils"
+import { LogoutButton } from "@/components/auth/logout-button"
 
 type Todo = {
   id: string
@@ -92,7 +93,7 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-background p-6">
       <div className="mx-auto max-w-6xl space-y-6">
         {/* 头部 */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <Link href="/">
               <Button variant="ghost" size="sm">
@@ -104,6 +105,7 @@ export default function DashboardPage() {
               <p className="text-sm text-muted-foreground">查看所有 Todos、里程碑和记忆</p>
             </div>
           </div>
+          <LogoutButton variant="outline" size="sm" />
         </div>
 
         {/* 统计卡片 */}

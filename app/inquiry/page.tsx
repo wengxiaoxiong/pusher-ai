@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Loader2, ArrowLeft, MessageSquare } from "lucide-react"
 import Link from "next/link"
+import { LogoutButton } from "@/components/auth/logout-button"
 
 type Inquiry = {
   question: string
@@ -99,16 +100,19 @@ export default function InquiryPage() {
     <div className="min-h-screen bg-background p-6">
       <div className="mx-auto max-w-4xl space-y-6">
         {/* 头部 */}
-        <div className="flex items-center gap-3">
-          <Link href="/">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-          </Link>
-          <div>
-            <h1 className="text-3xl font-bold">追问</h1>
-            <p className="text-sm text-muted-foreground">保持节奏,高效反思</p>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Link href="/">
+              <Button variant="ghost" size="sm">
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+            </Link>
+            <div>
+              <h1 className="text-3xl font-bold">追问</h1>
+              <p className="text-sm text-muted-foreground">保持节奏,高效反思</p>
+            </div>
           </div>
+          <LogoutButton variant="outline" size="sm" />
         </div>
 
         {/* 说明 */}

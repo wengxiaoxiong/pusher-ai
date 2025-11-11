@@ -41,9 +41,10 @@ export async function POST(req: Request) {
     )
   } catch (error) {
     console.error("Delete API error:", error)
+    const isAuthError = error instanceof Error && /未登录|未找到用户/.test(error.message)
     return new Response(
-      JSON.stringify({ error: "Failed to delete item" }),
-      { status: 500 }
+      JSON.stringify({ error: isAuthError ? "未登录" : "Failed to delete item" }),
+      { status: isAuthError ? 401 : 500 }
     )
   }
 }
